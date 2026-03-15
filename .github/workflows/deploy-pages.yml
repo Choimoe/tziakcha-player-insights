@@ -38,9 +38,9 @@ jobs:
         run: |
           mkdir -p _site
 
-          README_SOURCE="readme.cn.md"
+          README_SOURCE="readme.md"
           if [ ! -f "$README_SOURCE" ]; then
-            README_SOURCE="readme.md"
+            README_SOURCE="readme.cn.md"
           fi
 
           if [ ! -f "$README_SOURCE" ]; then
