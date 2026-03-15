@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   release:
@@ -45,3 +47,49 @@ jobs:
           name: ${{ github.ref_name }}
           files: ./tziakcha-player-insights-${{ github.ref_name }}.zip
           generate_release_notes: true
+
+  deploy-pages:
+    needs: release
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Setup node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+
+      - name: Build userscript
+        run: |
+          npm ci
+          npm run build
+
+      - name: Prepare Pages artifact
+        run: |
+          mkdir -p _site
+          cp dist/index.prod.user.js _site/index.prod.user.js
+          if [ -f "readme.md" ]; then
+            cp readme.md _site/README.md
+          elif [ -f "readme.cn.md" ]; then
+            cp readme.cn.md _site/README.md
+          fi
+          if [ -d "docs" ]; then
+            cp -r docs _site/
+          fi
+          touch _site/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./_site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
