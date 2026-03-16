@@ -1,4 +1,5 @@
 import { infoLog, warnLog } from "../../../shared/logger";
+import { fetchChagaReviewData } from "../../../shared/chaga-review";
 import {
   getFilledReviews,
   getReviews,
@@ -6,7 +7,7 @@ import {
   setReviewError,
 } from "./state";
 import { parseRound, ReviewerRenderRuntime, showCandidates } from "./render";
-import { ReviewApiError, ReviewResponseItem } from "./types";
+import { ReviewResponseItem } from "./types";
 
 export function fillEmptyValues(): void {
   const reviews = getReviews();
@@ -79,46 +80,30 @@ export function loadReviewData(runtime: ReviewerRenderRuntime): void {
     }
 
     seats[seat] = 1;
-    fetch(`https://tc-api.pesiu.org/review/?id=${gameId}&seat=${seat}`)
-      .then((response) => response.json())
-      .then(
-        (
-          result:
-            | ReviewApiError
-            | ReviewResponseItem[]
-            | { data?: ReviewResponseItem[] },
-        ) => {
-          if ((result as ReviewApiError).code) {
-            seats[seat] = 0;
-            const message = (result as ReviewApiError).message || "未知错误";
-            setReviewError(`评测接口错误：seat ${seat} - ${message}`);
-            warnLog(`Error fetching review data for seat ${seat}`, message);
-            return;
+    fetchChagaReviewData(gameId, seat)
+      .then(({ rows, errorMessage }) => {
+        if (errorMessage) {
+          seats[seat] = 0;
+          setReviewError(`评测接口错误：seat ${seat} - ${errorMessage}`);
+          warnLog(`Error fetching review data for seat ${seat}`, errorMessage);
+          return;
+        }
+
+        rows.forEach((row) => {
+          if (row.ri) {
+            reviews[`${row.rr}-${row.ri}`] = row as ReviewResponseItem;
           }
+        });
 
-          const rows = Array.isArray(result)
-            ? result
-            : Array.isArray((result as { data?: ReviewResponseItem[] }).data)
-              ? ((result as { data?: ReviewResponseItem[] })
-                  .data as ReviewResponseItem[])
-              : [];
+        seats[seat] = 2;
+        loadedCount += 1;
+        infoLog(`Download finish for seat ${seat}`);
 
-          rows.forEach((row) => {
-            if (row.ri) {
-              reviews[`${row.rr}-${row.ri}`] = row;
-            }
-          });
-
-          seats[seat] = 2;
-          loadedCount += 1;
-          infoLog(`Download finish for seat ${seat}`);
-
-          if (loadedCount === 4) {
-            fillEmptyValues();
-          }
-          showCandidates(runtime);
-        },
-      )
+        if (loadedCount === 4) {
+          fillEmptyValues();
+        }
+        showCandidates(runtime);
+      })
       .catch((error) => {
         seats[seat] = 0;
         setReviewError(`评测接口连接失败：seat ${seat}`);

@@ -1,6 +1,11 @@
 import { w } from "../../shared/env";
 import { infoLog, warnLog } from "../../shared/logger";
+
 import { ReviewResponseItem } from "../record/reviewer/types";
+import { calcChagaScore, choiceMatchesAi, Choice } from "./chaga-score";
+import { fetchAiResponse } from "./chaga-data";
+import { fetchStepData, StepData } from "./step-data";
+import { extractChoices } from "./step-simulator";
 
 type SessionPlayer = {
   name: string;
@@ -14,25 +19,6 @@ type SessionRecord = {
 type SessionData = {
   players: SessionPlayer[];
   records: SessionRecord[];
-};
-
-type StepPlayer = {
-  n?: string;
-  i?: string;
-};
-
-type StepData = {
-  p?: StepPlayer[];
-  a?: Array<[number, number]>;
-};
-
-type ChoiceKind = "play" | "chi" | "peng" | "gang" | "hu" | "pass" | "abandon";
-
-type Choice = {
-  seat: number;
-  actionIndex: number;
-  kind: ChoiceKind;
-  value: number | null;
 };
 
 type PlayerMetric = {
@@ -55,7 +41,6 @@ type MetricsResult = {
   };
 };
 
-const CHOICE_ACTION_TYPES = new Set([2, 3, 4, 5, 6, 8, 9]);
 const FIXED_RI_OFFSET = -1;
 let startedGameHref = "";
 
@@ -119,163 +104,6 @@ async function fetchSessionData(sessionId: string): Promise<SessionData> {
   };
 }
 
-async function fetchAiResponse(
-  sessionId: string,
-  seat: number,
-): Promise<ReviewResponseItem[]> {
-  const raw = await fetchJson<
-    ReviewResponseItem[] | { data?: ReviewResponseItem[] }
-  >(
-    `https://tc-api.pesiu.org/review/?id=${encodeURIComponent(sessionId)}&seat=${seat}`,
-    { credentials: "omit" },
-  );
-  return Array.isArray(raw) ? raw : Array.isArray(raw.data) ? raw.data : [];
-}
-
-function base64ToBytes(input: string): Uint8Array {
-  const binary = atob(input);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-async function decompressZlibBase64(input: string): Promise<string> {
-  const streamCtor = (
-    w as Window & {
-      DecompressionStream?: new (
-        format: string,
-      ) => TransformStream<Uint8Array, Uint8Array>;
-    }
-  ).DecompressionStream;
-  if (!streamCtor) {
-    throw new Error("当前浏览器不支持 DecompressionStream");
-  }
-  const bytes = base64ToBytes(input);
-  const buffer = bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-  const source = new Blob([buffer]).stream();
-  const decompressed = source.pipeThrough(new streamCtor("deflate"));
-  return await new Response(decompressed).text();
-}
-
-async function fetchStepData(recordId: string): Promise<StepData> {
-  const raw = await fetchJson<{ script?: string }>("/_qry/record/", {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-    },
-    body: new URLSearchParams({ id: recordId }).toString(),
-  });
-  if (!raw.script) {
-    throw new Error(`record ${recordId} 缺少 script`);
-  }
-  const jsonText = await decompressZlibBase64(raw.script);
-  return JSON.parse(jsonText) as StepData;
-}
-
-function bz2tc(tileCode: string): number {
-  if (!tileCode || tileCode.length < 2) {
-    return -1;
-  }
-  const tileType = tileCode[0];
-  const number = Number.parseInt(tileCode.slice(1), 10) - 1;
-  if (Number.isNaN(number)) {
-    return -1;
-  }
-  if (tileType === "W") return number;
-  if (tileType === "T") return number + 9;
-  if (tileType === "B") return number + 18;
-  if (tileType === "F") return number + 27;
-  if (tileType === "J") return number + 31;
-  if (tileType === "H") return number + 34;
-  return -1;
-}
-
-function normalizeAiAction(
-  actionText: string,
-): [ChoiceKind, number | null] | null {
-  const trimmed = actionText.trim();
-  if (!trimmed) {
-    return null;
-  }
-  if (trimmed.startsWith("Play ")) {
-    const tileIndex = bz2tc(trimmed.split(/\s+/).at(-1) || "");
-    return ["play", tileIndex >= 0 ? tileIndex : null];
-  }
-  if (trimmed.startsWith("Chi")) return ["chi", null];
-  if (trimmed.startsWith("Peng")) return ["peng", null];
-  if (trimmed.startsWith("Gang") || trimmed.startsWith("BuGang"))
-    return ["gang", null];
-  if (trimmed.startsWith("Hu")) return ["hu", null];
-  if (trimmed.startsWith("Pass")) return ["pass", null];
-  if (trimmed.startsWith("Abandon")) return ["abandon", null];
-  return null;
-}
-
-function actionToChoice(
-  actionIndex: number,
-  combined: number,
-  data: number,
-): Choice | null {
-  const seat = (combined >> 4) & 3;
-  const actionType = combined & 15;
-  if (!CHOICE_ACTION_TYPES.has(actionType)) {
-    return null;
-  }
-  if (actionType === 2) {
-    const tileId = data & 0xff;
-    return { seat, actionIndex, kind: "play", value: Math.floor(tileId / 4) };
-  }
-  if (actionType === 3) {
-    return { seat, actionIndex, kind: "chi", value: null };
-  }
-  if (actionType === 4) {
-    return { seat, actionIndex, kind: "peng", value: null };
-  }
-  if (actionType === 5) {
-    return { seat, actionIndex, kind: "gang", value: null };
-  }
-  if (actionType === 6) {
-    const isAutoHu = Boolean(data & 1);
-    return isAutoHu ? null : { seat, actionIndex, kind: "hu", value: null };
-  }
-  if (actionType === 8) {
-    const passMode = data & 3;
-    return passMode !== 0
-      ? null
-      : { seat, actionIndex, kind: "pass", value: null };
-  }
-  if (actionType === 9) {
-    return { seat, actionIndex, kind: "abandon", value: null };
-  }
-  return null;
-}
-
-function extractChoices(stepData: StepData): Choice[] {
-  if (!Array.isArray(stepData.a)) {
-    return [];
-  }
-  const result: Choice[] = [];
-  stepData.a.forEach((action, actionIndex) => {
-    if (!Array.isArray(action) || action.length < 2) {
-      return;
-    }
-    const [combined, data] = action;
-    if (typeof combined !== "number" || typeof data !== "number") {
-      return;
-    }
-    const choice = actionToChoice(actionIndex, combined, data);
-    if (choice) {
-      result.push(choice);
-    }
-  });
-  return result;
-}
-
 function buildResponseMap(
   responseRows: ReviewResponseItem[],
   roundIndex: number,
@@ -290,87 +118,6 @@ function buildResponseMap(
     }
   });
   return responseMap;
-}
-
-function choiceMatchesAi(
-  choice: Choice,
-  row: ReviewResponseItem | undefined,
-): boolean {
-  if (!row) {
-    return true;
-  }
-  const candidates = row.extra?.candidates;
-  if (!Array.isArray(candidates) || !candidates.length) {
-    return true;
-  }
-  const top = candidates[0];
-  if (!Array.isArray(top) || typeof top[1] !== "string") {
-    return true;
-  }
-  const normalized = normalizeAiAction(top[1]);
-  if (!normalized) {
-    return true;
-  }
-  const [kind, value] = normalized;
-  if (kind !== choice.kind) {
-    return false;
-  }
-  if (kind === "play" && value !== choice.value) {
-    return false;
-  }
-  return true;
-}
-
-function calcChagaScore(
-  choice: Choice,
-  row: ReviewResponseItem | undefined,
-): number {
-  if (!row) {
-    return 100;
-  }
-  const candidates = row.extra?.candidates;
-  if (!Array.isArray(candidates) || !candidates.length) {
-    return 100;
-  }
-  const parsed: Array<{
-    weight: number;
-    normalized: [ChoiceKind, number | null];
-  }> = [];
-  candidates.forEach((item) => {
-    if (!Array.isArray(item) || item.length < 2) {
-      return;
-    }
-    const [weightRaw, actionRaw] = item;
-    if (typeof weightRaw !== "number" || typeof actionRaw !== "string") {
-      return;
-    }
-    const normalized = normalizeAiAction(actionRaw);
-    if (!normalized) {
-      return;
-    }
-    parsed.push({ weight: weightRaw, normalized });
-  });
-  if (!parsed.length) {
-    return 100;
-  }
-  const topWeight = parsed[0].weight;
-  let matchedWeight: number | null = null;
-  parsed.forEach(({ weight, normalized }) => {
-    const [kind, value] = normalized;
-    if (kind !== choice.kind) {
-      return;
-    }
-    if (kind === "play" && value !== choice.value) {
-      return;
-    }
-    if (matchedWeight === null || weight > matchedWeight) {
-      matchedWeight = weight;
-    }
-  });
-  if (matchedWeight === null) {
-    return 0;
-  }
-  return Math.exp(matchedWeight - topWeight) * 100;
 }
 
 async function computeMetrics(sessionId: string): Promise<MetricsResult> {
