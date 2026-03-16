@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import urllib.parse
 import urllib.request
 import zlib
@@ -663,6 +664,55 @@ def normalize_ai_action(action_text: str) -> tuple[str, int | None] | None:
 	return None
 
 
+def calc_chaga_score(choice: Choice, row: dict[str, Any] | None) -> float | None:
+	"""计算单步 CHAGA 度。
+	- 对 candidates 的权重做 softmax
+	- 再按首选候选缩放为 100 分
+	- 返回玩家动作对应候选的分数（0~100）
+	- 无 AI 数据时按 100 分计入，避免与一致率口径不一致
+	"""
+	if row is None:
+		return 100.0
+	extra = row.get("extra")
+	if not isinstance(extra, dict):
+		return 100.0
+	candidates = extra.get("candidates")
+	if not isinstance(candidates, list) or not candidates:
+		return 100.0
+
+	parsed: list[tuple[float, str, tuple[str, int | None]]] = []
+	for item in candidates:
+		if not isinstance(item, list) or len(item) < 2:
+			continue
+		weight_raw, action_raw = item[0], item[1]
+		if not isinstance(weight_raw, (int, float)) or not isinstance(action_raw, str):
+			continue
+		normalized = normalize_ai_action(action_raw)
+		if normalized is None:
+			continue
+		parsed.append((float(weight_raw), action_raw.strip(), normalized))
+
+	if not parsed:
+		return 100.0
+
+	top_weight = parsed[0][0]
+	best_match_weight: float | None = None
+
+	for weight, _, (kind, value) in parsed:
+		if choice.kind != kind:
+			continue
+		if choice.kind == "play" and choice.value != value:
+			continue
+		if best_match_weight is None or weight > best_match_weight:
+			best_match_weight = weight
+
+	if best_match_weight is None:
+		return 0.0
+
+	# softmax 后再按首选缩放，等价于 exp(w_match - w_top) * 100
+	return math.exp(best_match_weight - top_weight) * 100.0
+
+
 def has_related_ai_operation(row: dict[str, Any] | None) -> bool:
 	if row is None:
 		return False
@@ -731,6 +781,10 @@ def summarize(choice_results: list[dict[str, Any]], seat: int, round_index: int,
 	total = len(choice_results)
 	matched = sum(1 for item in choice_results if item["matched"])
 	ratio = matched / total if total else 0.0
+	chaga_values = [float(item["chaga_score"]) for item in choice_results if item.get("chaga_score") is not None]
+	chaga_count = len(chaga_values)
+	chaga_sum = sum(chaga_values)
+	chaga_avg = chaga_sum / chaga_count if chaga_count else 0.0
 	player_name = None
 	players = step_data.get("p")
 	if isinstance(players, list) and 0 <= seat < len(players) and isinstance(players[seat], dict):
@@ -744,6 +798,9 @@ def summarize(choice_results: list[dict[str, Any]], seat: int, round_index: int,
 		"matched": matched,
 		"total": total,
 		"ratio": ratio,
+		"chaga_sum": chaga_sum,
+		"chaga_count": chaga_count,
+		"chaga_avg": chaga_avg,
 		"details": choice_results,
 	}
 
@@ -796,6 +853,7 @@ def build_results(
 		ri = choice.action_index + offset
 		row = response_map.get(ri)
 		matched, reason = choice_matches_ai(choice, row)
+		chaga_score = calc_chaga_score(choice, row)
 		ai_top = None
 		if row and isinstance(row.get("extra"), dict):
 			candidates = row["extra"].get("candidates")
@@ -808,6 +866,7 @@ def build_results(
 				"player_action": choice.label,
 				"ai_top_action": ai_top,
 				"matched": matched,
+				"chaga_score": chaga_score,
 				"reason": reason,
 			}
 		)
@@ -841,6 +900,9 @@ def analyze_session(session_id: str, output_dir: Path) -> dict[str, Any]:
 				"matched": 0,
 				"total": 0,
 				"ratio": 0.0,
+				"chaga_sum": 0.0,
+				"chaga_count": 0,
+				"chaga_avg": 0.0,
 				"rounds": [],
 			}
 			player_summaries.append(summary)
@@ -871,6 +933,8 @@ def analyze_session(session_id: str, output_dir: Path) -> dict[str, Any]:
 
 		round_matched = 0
 		round_total = 0
+		round_chaga_sum = 0.0
+		round_chaga_count = 0
 		seat_results: list[dict[str, Any]] = []
 
 		for ai_seat in range(4):
@@ -897,16 +961,23 @@ def analyze_session(session_id: str, output_dir: Path) -> dict[str, Any]:
 					"matched": 0,
 					"total": 0,
 					"ratio": 0.0,
+					"chaga_sum": 0.0,
+					"chaga_count": 0,
+					"chaga_avg": 0.0,
 					"rounds": [],
 				}
 				player_summaries.append(player_summary)
 				player_summary_map[player_name] = player_summary
 			player_summary["matched"] += seat_result["matched"]
 			player_summary["total"] += seat_result["total"]
+			player_summary["chaga_sum"] += float(seat_result.get("chaga_sum", 0.0))
+			player_summary["chaga_count"] += int(seat_result.get("chaga_count", 0))
 			player_summary["rounds"].append(seat_result)
 
 			round_matched += seat_result["matched"]
 			round_total += seat_result["total"]
+			round_chaga_sum += float(seat_result.get("chaga_sum", 0.0))
+			round_chaga_count += int(seat_result.get("chaga_count", 0))
 			seat_results.append(seat_result)
 
 		round_summaries.append(
@@ -921,6 +992,9 @@ def analyze_session(session_id: str, output_dir: Path) -> dict[str, Any]:
 				"matched": round_matched,
 				"total": round_total,
 				"ratio": round_matched / round_total if round_total else 0.0,
+				"chaga_sum": round_chaga_sum,
+				"chaga_count": round_chaga_count,
+				"chaga_avg": round_chaga_sum / round_chaga_count if round_chaga_count else 0.0,
 				"seats": seat_results,
 			}
 		)
@@ -928,9 +1002,14 @@ def analyze_session(session_id: str, output_dir: Path) -> dict[str, Any]:
 	for player_summary in player_summaries:
 		total = player_summary["total"]
 		player_summary["ratio"] = player_summary["matched"] / total if total else 0.0
+		player_chaga_count = int(player_summary.get("chaga_count", 0))
+		player_chaga_sum = float(player_summary.get("chaga_sum", 0.0))
+		player_summary["chaga_avg"] = player_chaga_sum / player_chaga_count if player_chaga_count else 0.0
 
 	overall_matched = sum(item["matched"] for item in player_summaries)
 	overall_total = sum(item["total"] for item in player_summaries)
+	overall_chaga_sum = sum(float(item.get("chaga_sum", 0.0)) for item in player_summaries)
+	overall_chaga_count = sum(int(item.get("chaga_count", 0)) for item in player_summaries)
 
 	result = {
 		"session_id": session_id,
@@ -942,6 +1021,9 @@ def analyze_session(session_id: str, output_dir: Path) -> dict[str, Any]:
 			"matched": overall_matched,
 			"total": overall_total,
 			"ratio": overall_matched / overall_total if overall_total else 0.0,
+			"chaga_sum": overall_chaga_sum,
+			"chaga_count": overall_chaga_count,
+			"chaga_avg": overall_chaga_sum / overall_chaga_count if overall_chaga_count else 0.0,
 		},
 		"players": player_summaries,
 		"rounds": round_summaries,
@@ -1034,10 +1116,12 @@ def print_session_report(result: dict[str, Any], *, show_details: bool = False) 
 	title = result.get("title") or "<未命名牌局>"
 	overall = result["overall"]
 	overall_ratio = overall["ratio"] * 100 if overall["total"] else 0.0
+	overall_chaga = float(overall.get("chaga_avg", 0.0))
 
 	print(f"牌局: {title} ({result['session_id']})")
 	print(f"盘数: {result['record_count']} / periods={result.get('periods')}")
 	print(f"总体一致率: {overall['matched']}/{overall['total']} = {overall_ratio:.2f}%")
+	print(f"总体CHAGA度: {overall_chaga:.2f}")
 	ai_seat_reference = result.get("ai_seat_reference")
 	if isinstance(ai_seat_reference, list) and ai_seat_reference:
 		pairs = [f"ai{idx}={name}" for idx, name in enumerate(ai_seat_reference)]
@@ -1047,16 +1131,18 @@ def print_session_report(result: dict[str, Any], *, show_details: bool = False) 
 	for player in result["players"]:
 		player_name = player.get("player_name") or f"Seat {player['seat']}"
 		ratio = player["ratio"] * 100 if player["total"] else 0.0
-		print(f"- {player_name} (seat={player['seat']}): {player['matched']}/{player['total']} = {ratio:.2f}%")
+		chaga_avg = float(player.get("chaga_avg", 0.0))
+		print(f"- {player_name} (seat={player['seat']}): {player['matched']}/{player['total']} = {ratio:.2f}% | CHAGA度={chaga_avg:.2f}")
 
 	print()
 	print("逐盘汇总:")
 	for round_info in result["rounds"]:
 		round_ratio = round_info["ratio"] * 100 if round_info["total"] else 0.0
+		round_chaga = float(round_info.get("chaga_avg", 0.0))
 		record_winner = "、".join(round_info.get("record_winner_names") or []) or "无（流局/未检测到）"
 		ai_winner = "、".join(round_info.get("ai_winner_names") or []) or "无（未检测到）"
 		print(
-			f"- 第 {round_info['round_no']:02d} 盘 | record={round_info['record_id']} | 总计 {round_info['matched']}/{round_info['total']} = {round_ratio:.2f}%"
+			f"- 第 {round_info['round_no']:02d} 盘 | record={round_info['record_id']} | 总计 {round_info['matched']}/{round_info['total']} = {round_ratio:.2f}% | CHAGA度={round_chaga:.2f}"
 		)
 		print(f"  牌谱和牌: {record_winner}")
 		print(f"  AI 和牌: {ai_winner}")
@@ -1066,11 +1152,12 @@ def print_session_report(result: dict[str, Any], *, show_details: bool = False) 
 		for seat_info in round_info["seats"]:
 			player_name = seat_info.get("player_name") or f"Seat {seat_info['seat']}"
 			seat_ratio = seat_info["ratio"] * 100 if seat_info["total"] else 0.0
+			seat_chaga = float(seat_info.get("chaga_avg", 0.0))
 			align_note = ""
 			if not seat_info.get("round_index_matched", True):
 				align_note = f" | ⚠ AI rr={seat_info['round_index']}"
 			print(
-				f"  - {player_name} (seat={seat_info['seat']}): {seat_info['matched']}/{seat_info['total']} = {seat_ratio:.2f}%{align_note}"
+				f"  - {player_name} (seat={seat_info['seat']}): {seat_info['matched']}/{seat_info['total']} = {seat_ratio:.2f}% | CHAGA度={seat_chaga:.2f}{align_note}"
 			)
 		if show_details:
 			print_round_actions(round_info)

@@ -1,10 +1,12 @@
 import { w } from "../shared/env";
 import { logCurrentCookie } from "../shared/cookie";
 import { debugLog } from "../shared/logger";
+import { initGameFeature } from "../features/game";
 import { initHistoryFeature, initUserGameFeature } from "../features/history";
 import { initRecordFeature } from "../features/record";
 import { initTechFeature } from "../features/tech";
 import {
+  isGamePage,
   isHistoryPage,
   isRecordPage,
   isTechPage,
@@ -27,6 +29,7 @@ export function runOnRoute(): void {
 
   routeState.lastHref = href;
   const routeFlags = {
+    game: isGamePage(),
     record: isRecordPage(),
     tech: isTechPage(),
     history: isHistoryPage(),
@@ -39,6 +42,13 @@ export function runOnRoute(): void {
     routeFlags,
   });
   logCurrentCookie();
+
+  if (routeFlags.game) {
+    if (initGameFeature(href)) {
+      debugLog("Game route init dispatched");
+    }
+    return;
+  }
 
   if (routeFlags.record) {
     if (initRecordFeature(href)) {
