@@ -1,25 +1,12 @@
 import { w } from "../../shared/env";
 import { infoLog, warnLog } from "../../shared/logger";
+import { fetchSessionData } from "../../shared/session-data";
 
 import { ReviewResponseItem } from "../record/reviewer/types";
 import { calcChagaScore, choiceMatchesAi, Choice } from "./chaga-score";
 import { fetchAiResponse } from "./chaga-data";
 import { fetchStepData, StepData } from "./step-data";
 import { extractChoices } from "./step-simulator";
-
-type SessionPlayer = {
-  name: string;
-  id?: string;
-};
-
-type SessionRecord = {
-  id: string;
-};
-
-type SessionData = {
-  players: SessionPlayer[];
-  records: SessionRecord[];
-};
 
 type PlayerMetric = {
   playerName: string;
@@ -42,66 +29,12 @@ type MetricsResult = {
 };
 
 const FIXED_RI_OFFSET = -1;
+const SESSION_NOT_FINISHED_ERROR = "SESSION_NOT_FINISHED";
 let startedGameHref = "";
 
 function getGameIdFromUrl(): string | null {
   const url = new URL(w.location.href);
   return url.searchParams.get("id");
-}
-
-async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    credentials: "include",
-    ...options,
-  });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} for ${url}`);
-  }
-  return (await response.json()) as T;
-}
-
-function extractSessionPlayers(raw: unknown): SessionPlayer[] {
-  if (!Array.isArray((raw as { players?: unknown[] })?.players)) {
-    return [];
-  }
-  return ((raw as { players: unknown[] }).players || []).map((item) => {
-    const player = item as {
-      n?: string;
-      name?: string;
-      i?: string;
-      id?: string;
-    };
-    return {
-      name: player.n || player.name || "",
-      id: player.i || player.id,
-    };
-  });
-}
-
-function extractSessionRecords(raw: unknown): SessionRecord[] {
-  if (!Array.isArray((raw as { records?: unknown[] })?.records)) {
-    return [];
-  }
-  return ((raw as { records: unknown[] }).records || [])
-    .map((item) => {
-      const record = item as { id?: string; i?: string };
-      const id = record.id || record.i;
-      return id ? { id } : null;
-    })
-    .filter((item): item is SessionRecord => Boolean(item));
-}
-
-async function fetchSessionData(sessionId: string): Promise<SessionData> {
-  const raw = await fetchJson<unknown>(
-    `/_qry/game/?id=${encodeURIComponent(sessionId)}`,
-    {
-      method: "POST",
-    },
-  );
-  return {
-    players: extractSessionPlayers(raw),
-    records: extractSessionRecords(raw),
-  };
 }
 
 function buildResponseMap(
@@ -122,6 +55,9 @@ function buildResponseMap(
 
 async function computeMetrics(sessionId: string): Promise<MetricsResult> {
   const sessionData = await fetchSessionData(sessionId);
+  if (!sessionData.isFinished) {
+    throw new Error(SESSION_NOT_FINISHED_ERROR);
+  }
   const sessionPlayers = sessionData.players;
   const sessionPlayerNames = sessionPlayers.map(
     (player, index) => player.name || `Seat ${index}`,
@@ -240,6 +176,7 @@ function upsertMetricsRows(metrics: MetricsResult): void {
 
   document.getElementById("reviewer-game-ratio-row")?.remove();
   document.getElementById("reviewer-game-chaga-row")?.remove();
+  document.getElementById("reviewer-game-pending-row")?.remove();
 
   const ratioRow = createMetricRow(
     "一致率",
@@ -257,6 +194,62 @@ function upsertMetricsRows(metrics: MetricsResult): void {
   infoLog("Game overview metrics updated", metrics.overall);
 }
 
+function createPendingRow(
+  label: string,
+  message: string,
+  rowId: string,
+): HTMLTableRowElement {
+  const row = document.createElement("tr");
+  row.id = rowId;
+
+  const header = document.createElement("th");
+  header.className = "bg-secondary text-light";
+  header.textContent = label;
+  row.appendChild(header);
+
+  const standardScoreRow = Array.from(
+    document.querySelectorAll("table.table tr"),
+  ).find((item) =>
+    (item.querySelector("th")?.textContent || "").includes("标准分"),
+  );
+  const cells = Array.from(standardScoreRow?.children || []).slice(1);
+  const totalColSpan = cells.reduce((sum, cell) => {
+    const htmlCell = cell as HTMLTableCellElement;
+    return sum + (htmlCell.colSpan || 1);
+  }, 0);
+
+  const cell = document.createElement("td");
+  cell.className = "bg-secondary text-light";
+  cell.colSpan = Math.max(totalColSpan, 1);
+  cell.textContent = message;
+  row.appendChild(cell);
+
+  return row;
+}
+
+function upsertPendingRow(message: string): void {
+  const standardScoreRow = Array.from(
+    document.querySelectorAll("table.table tr"),
+  ).find((row) =>
+    (row.querySelector("th")?.textContent || "").includes("标准分"),
+  );
+  if (!standardScoreRow || !standardScoreRow.parentElement) {
+    setTimeout(() => upsertPendingRow(message), 200);
+    return;
+  }
+
+  document.getElementById("reviewer-game-ratio-row")?.remove();
+  document.getElementById("reviewer-game-chaga-row")?.remove();
+  document.getElementById("reviewer-game-pending-row")?.remove();
+
+  const pendingRow = createPendingRow(
+    "AI评分",
+    message,
+    "reviewer-game-pending-row",
+  );
+  standardScoreRow.insertAdjacentElement("afterend", pendingRow);
+}
+
 function upsertLoadingRows(message: string): void {
   const standardScoreRow = Array.from(
     document.querySelectorAll("table.table tr"),
@@ -269,6 +262,7 @@ function upsertLoadingRows(message: string): void {
   }
   document.getElementById("reviewer-game-ratio-row")?.remove();
   document.getElementById("reviewer-game-chaga-row")?.remove();
+  document.getElementById("reviewer-game-pending-row")?.remove();
   const ratioRow = createMetricRow(
     "一致率",
     [message, message, message, message],
@@ -300,6 +294,10 @@ export function initGameFeature(href: string): boolean {
       upsertMetricsRows(metrics);
     })
     .catch((error) => {
+      if ((error as Error)?.message === SESSION_NOT_FINISHED_ERROR) {
+        upsertPendingRow("等待对局完成");
+        return;
+      }
       warnLog("Game overview metrics failed", error);
       upsertLoadingRows("加载失败");
     });

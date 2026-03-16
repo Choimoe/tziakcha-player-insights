@@ -1,5 +1,6 @@
 import { infoLog, warnLog } from "../../../shared/logger";
 import { fetchChagaReviewData } from "../../../shared/chaga-review";
+import { fetchSessionData } from "../../../shared/session-data";
 import {
   getFilledReviews,
   getReviews,
@@ -70,46 +71,62 @@ export function loadReviewData(runtime: ReviewerRenderRuntime): void {
   const round = parseRound(roundEl.innerHTML, runtime.wind);
   infoLog(`Loading review data for game: ${gameId}, round: ${round}`);
 
-  let loadedCount = 0;
-  const seats = getReviewSeats();
-  const reviews = getReviews();
+  void fetchSessionData(gameId)
+    .then((sessionData) => {
+      if (!sessionData.isFinished) {
+        setReviewError("等待对局完成后可查看AI评分");
+        infoLog(`Review data skipped: game not finished (${gameId})`);
+        return;
+      }
 
-  for (let seat = 0; seat <= 3; seat += 1) {
-    if (seats[seat]) {
-      continue;
-    }
+      let loadedCount = 0;
+      const seats = getReviewSeats();
+      const reviews = getReviews();
 
-    seats[seat] = 1;
-    fetchChagaReviewData(gameId, seat)
-      .then(({ rows, errorMessage }) => {
-        if (errorMessage) {
-          seats[seat] = 0;
-          setReviewError(`评测接口错误：seat ${seat} - ${errorMessage}`);
-          warnLog(`Error fetching review data for seat ${seat}`, errorMessage);
-          return;
+      for (let seat = 0; seat <= 3; seat += 1) {
+        if (seats[seat]) {
+          continue;
         }
 
-        rows.forEach((row) => {
-          if (row.ri) {
-            reviews[`${row.rr}-${row.ri}`] = row as ReviewResponseItem;
-          }
-        });
+        seats[seat] = 1;
+        fetchChagaReviewData(gameId, seat)
+          .then(({ rows, errorMessage }) => {
+            if (errorMessage) {
+              seats[seat] = 0;
+              setReviewError(`评测接口错误：seat ${seat} - ${errorMessage}`);
+              warnLog(
+                `Error fetching review data for seat ${seat}`,
+                errorMessage,
+              );
+              return;
+            }
 
-        seats[seat] = 2;
-        loadedCount += 1;
-        infoLog(`Download finish for seat ${seat}`);
+            rows.forEach((row) => {
+              if (row.ri) {
+                reviews[`${row.rr}-${row.ri}`] = row as ReviewResponseItem;
+              }
+            });
 
-        if (loadedCount === 4) {
-          fillEmptyValues();
-        }
-        showCandidates(runtime);
-      })
-      .catch((error) => {
-        seats[seat] = 0;
-        setReviewError(`评测接口连接失败：seat ${seat}`);
-        warnLog(`Download failed for seat ${seat}`, error);
-      });
-  }
+            seats[seat] = 2;
+            loadedCount += 1;
+            infoLog(`Download finish for seat ${seat}`);
 
-  showCandidates(runtime);
+            if (loadedCount === 4) {
+              fillEmptyValues();
+            }
+            showCandidates(runtime);
+          })
+          .catch((error) => {
+            seats[seat] = 0;
+            setReviewError(`评测接口连接失败：seat ${seat}`);
+            warnLog(`Download failed for seat ${seat}`, error);
+          });
+      }
+
+      showCandidates(runtime);
+    })
+    .catch((error) => {
+      setReviewError("对局状态读取失败，请稍后重试");
+      warnLog("Failed to load game session status", error);
+    });
 }
