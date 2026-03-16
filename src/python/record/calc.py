@@ -701,25 +701,21 @@ def build_response_map(response_rows: list[dict[str, Any]], round_index: int) ->
 
 
 def choice_matches_ai(choice: Choice, row: dict[str, Any] | None) -> tuple[bool, str]:
-	if choice.kind in {"pass", "abandon"}:
-		if has_related_ai_operation(row):
-			return False, "AI 存在相关操作候选"
-		return True, "AI 无相关操作候选"
-
+	# 没有 AI 数据（row 不存在，或 candidates 为空/无效）：视为"无从比较"，不计为不匹配
 	if row is None:
-		return False, "AI 无对应数据"
+		return True, "AI 无对应数据"
 
 	candidates = row.get("extra", {}).get("candidates") if isinstance(row.get("extra"), dict) else None
 	if not isinstance(candidates, list) or not candidates:
-		return False, "AI 没有候选动作"
+		return True, "AI 没有候选动作"
 
 	top_candidate = candidates[0]
 	if not isinstance(top_candidate, list) or len(top_candidate) < 2 or not isinstance(top_candidate[1], str):
-		return False, "AI 首选动作无效"
+		return True, "AI 首选动作无效"
 
 	normalized = normalize_ai_action(top_candidate[1])
 	if normalized is None:
-		return False, f"AI 首选动作无法识别: {top_candidate[1]}"
+		return True, f"AI 首选动作无法识别: {top_candidate[1].strip()}"
 
 	ai_kind, ai_value = normalized
 	if choice.kind != ai_kind:
@@ -1020,14 +1016,16 @@ def print_round_actions(round_info: dict[str, Any]) -> None:
 		pad_player = max(0, 20 - cjk_extra)
 		cjk_extra_action = sum(1 for c in player_action if "\u4e00" <= c <= "\u9fff")
 		pad_action = max(0, 10 - cjk_extra_action)
+		reason = item.get("reason", "")
 		if ai_top is not None:
 			cjk_extra_ai = sum(1 for c in ai_top if "\u4e00" <= c <= "\u9fff")
 			pad_ai = max(0, 10 - cjk_extra_ai)
 			mark = "✓" if matched else "✗"
-			reason = item.get("reason", "")
-			# 只在 reason 不与 ai_top 列重复时才显示（如"过"被AI建议操作的情况）
 			extra_note = f"  ({reason})" if reason and not reason.startswith("AI 首选") else ""
 			print(f"    [{action_index:>4}] {player_col:<{pad_player}} {player_action:<{pad_action}}  AI[ri={ri:>4}]: {ai_top:<{pad_ai}}  {mark}{extra_note}")
+		elif not matched:
+			# 即使无 ai_top，matched=False 时也要显示 ✗（让统计与显示一致）
+			print(f"    [{action_index:>4}] {player_col:<{pad_player}} {player_action:<{pad_action}}  ✗  ({reason})")
 		else:
 			print(f"    [{action_index:>4}] {player_col:<{pad_player}} {player_action:<{pad_action}}  (无AI数据)")
 
