@@ -143,6 +143,38 @@ async function computeMetrics(sessionId: string): Promise<MetricsResult> {
   };
 }
 
+function findStandardScoreRow(): HTMLTableRowElement | null {
+  // 先尝试带 .table 类（桌面端），再兜底普通 table（移动端）
+  const selectors = ["table.table tr", "table tr"];
+  for (const selector of selectors) {
+    const found = Array.from(document.querySelectorAll(selector)).find((row) =>
+      (row.querySelector("th")?.textContent || "").includes("标准分"),
+    );
+    if (found) {
+      return found as HTMLTableRowElement;
+    }
+  }
+  return null;
+}
+
+function clearInsertedRows(): void {
+  document.getElementById("reviewer-game-ratio-row")?.remove();
+  document.getElementById("reviewer-game-chaga-row")?.remove();
+  document.getElementById("reviewer-game-pending-row")?.remove();
+}
+
+function withAnchorRow(
+  callback: (anchor: HTMLTableRowElement) => void,
+  retryInterval = 200,
+): void {
+  const anchor = findStandardScoreRow();
+  if (!anchor || !anchor.parentElement) {
+    setTimeout(() => withAnchorRow(callback, retryInterval), retryInterval);
+    return;
+  }
+  callback(anchor);
+}
+
 function createMetricRow(
   label: string,
   values: string[],
@@ -165,116 +197,64 @@ function createMetricRow(
 }
 
 function upsertMetricsRows(metrics: MetricsResult): void {
-  const standardScoreRow = Array.from(
-    document.querySelectorAll("table.table tr"),
-  ).find((row) =>
-    (row.querySelector("th")?.textContent || "").includes("标准分"),
-  );
-  if (!standardScoreRow || !standardScoreRow.parentElement) {
-    return;
-  }
-
-  document.getElementById("reviewer-game-ratio-row")?.remove();
-  document.getElementById("reviewer-game-chaga-row")?.remove();
-  document.getElementById("reviewer-game-pending-row")?.remove();
-
-  const ratioRow = createMetricRow(
-    "一致率",
-    metrics.players.map((item) => `${(item.ratio * 100).toFixed(2)}%`),
-    "reviewer-game-ratio-row",
-  );
-  const chagaRow = createMetricRow(
-    "CHAGA度",
-    metrics.players.map((item) => item.chagaAvg.toFixed(2)),
-    "reviewer-game-chaga-row",
-  );
-
-  standardScoreRow.insertAdjacentElement("afterend", chagaRow);
-  standardScoreRow.insertAdjacentElement("afterend", ratioRow);
-  infoLog("Game overview metrics updated", metrics.overall);
-}
-
-function createPendingRow(
-  label: string,
-  message: string,
-  rowId: string,
-): HTMLTableRowElement {
-  const row = document.createElement("tr");
-  row.id = rowId;
-
-  const header = document.createElement("th");
-  header.className = "bg-secondary text-light";
-  header.textContent = label;
-  row.appendChild(header);
-
-  const standardScoreRow = Array.from(
-    document.querySelectorAll("table.table tr"),
-  ).find((item) =>
-    (item.querySelector("th")?.textContent || "").includes("标准分"),
-  );
-  const cells = Array.from(standardScoreRow?.children || []).slice(1);
-  const totalColSpan = cells.reduce((sum, cell) => {
-    const htmlCell = cell as HTMLTableCellElement;
-    return sum + (htmlCell.colSpan || 1);
-  }, 0);
-
-  const cell = document.createElement("td");
-  cell.className = "bg-secondary text-light";
-  cell.colSpan = Math.max(totalColSpan, 1);
-  cell.textContent = message;
-  row.appendChild(cell);
-
-  return row;
+  withAnchorRow((anchor) => {
+    clearInsertedRows();
+    const ratioRow = createMetricRow(
+      "一致率",
+      metrics.players.map((item) => `${(item.ratio * 100).toFixed(2)}%`),
+      "reviewer-game-ratio-row",
+    );
+    const chagaRow = createMetricRow(
+      "CHAGA度",
+      metrics.players.map((item) => item.chagaAvg.toFixed(2)),
+      "reviewer-game-chaga-row",
+    );
+    anchor.insertAdjacentElement("afterend", chagaRow);
+    anchor.insertAdjacentElement("afterend", ratioRow);
+    infoLog("Game overview metrics updated", metrics.overall);
+  });
 }
 
 function upsertPendingRow(message: string): void {
-  const standardScoreRow = Array.from(
-    document.querySelectorAll("table.table tr"),
-  ).find((row) =>
-    (row.querySelector("th")?.textContent || "").includes("标准分"),
-  );
-  if (!standardScoreRow || !standardScoreRow.parentElement) {
-    setTimeout(() => upsertPendingRow(message), 200);
-    return;
-  }
+  withAnchorRow((anchor) => {
+    clearInsertedRows();
+    const cells = Array.from(anchor.children).slice(1);
+    const totalColSpan = cells.reduce((sum, cell) => {
+      return sum + ((cell as HTMLTableCellElement).colSpan || 1);
+    }, 0);
 
-  document.getElementById("reviewer-game-ratio-row")?.remove();
-  document.getElementById("reviewer-game-chaga-row")?.remove();
-  document.getElementById("reviewer-game-pending-row")?.remove();
+    const row = document.createElement("tr");
+    row.id = "reviewer-game-pending-row";
+    const header = document.createElement("th");
+    header.className = "bg-secondary text-light";
+    header.textContent = "AI评分";
+    row.appendChild(header);
+    const cell = document.createElement("td");
+    cell.className = "bg-secondary text-light";
+    cell.colSpan = Math.max(totalColSpan, 1);
+    cell.textContent = message;
+    row.appendChild(cell);
 
-  const pendingRow = createPendingRow(
-    "AI评分",
-    message,
-    "reviewer-game-pending-row",
-  );
-  standardScoreRow.insertAdjacentElement("afterend", pendingRow);
+    anchor.insertAdjacentElement("afterend", row);
+  });
 }
 
 function upsertLoadingRows(message: string): void {
-  const standardScoreRow = Array.from(
-    document.querySelectorAll("table.table tr"),
-  ).find((row) =>
-    (row.querySelector("th")?.textContent || "").includes("标准分"),
-  );
-  if (!standardScoreRow || !standardScoreRow.parentElement) {
-    setTimeout(() => upsertLoadingRows(message), 200);
-    return;
-  }
-  document.getElementById("reviewer-game-ratio-row")?.remove();
-  document.getElementById("reviewer-game-chaga-row")?.remove();
-  document.getElementById("reviewer-game-pending-row")?.remove();
-  const ratioRow = createMetricRow(
-    "一致率",
-    [message, message, message, message],
-    "reviewer-game-ratio-row",
-  );
-  const chagaRow = createMetricRow(
-    "CHAGA度",
-    [message, message, message, message],
-    "reviewer-game-chaga-row",
-  );
-  standardScoreRow.insertAdjacentElement("afterend", chagaRow);
-  standardScoreRow.insertAdjacentElement("afterend", ratioRow);
+  withAnchorRow((anchor) => {
+    clearInsertedRows();
+    const ratioRow = createMetricRow(
+      "一致率",
+      [message, message, message, message],
+      "reviewer-game-ratio-row",
+    );
+    const chagaRow = createMetricRow(
+      "CHAGA度",
+      [message, message, message, message],
+      "reviewer-game-chaga-row",
+    );
+    anchor.insertAdjacentElement("afterend", chagaRow);
+    anchor.insertAdjacentElement("afterend", ratioRow);
+  });
 }
 
 export function initGameFeature(href: string): boolean {
