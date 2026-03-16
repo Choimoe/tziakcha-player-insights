@@ -4,6 +4,10 @@ export function isRecordPage(): boolean {
   return /^\/record(?:\/|$)/.test(w.location.pathname);
 }
 
+export function isGamePage(): boolean {
+  return /^\/game(?:\/|$)/.test(w.location.pathname);
+}
+
 export function isTechPage(): boolean {
   return /^\/user\/tech(?:\/|$)/.test(w.location.pathname);
 }
