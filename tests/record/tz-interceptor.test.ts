@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const nativeDefineProperty = Object.defineProperty;
 const nativeReflectDefineProperty = Reflect.defineProperty;
+const nativeGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
 function resetReviewDom(): void {
   document.body.innerHTML = '<div id="review"></div>';
@@ -19,7 +20,9 @@ describe("tz interceptor", () => {
   afterEach(() => {
     Object.defineProperty = nativeDefineProperty;
     Reflect.defineProperty = nativeReflectDefineProperty;
+    Object.getOwnPropertyDescriptor = nativeGetOwnPropertyDescriptor;
     resetReviewDom();
+    vi.restoreAllMocks();
     vi.resetModules();
     vi.useRealTimers();
   });
@@ -78,14 +81,23 @@ describe("tz interceptor", () => {
   it("reports an error when TZ is non configurable and non writable", async () => {
     resetReviewDom();
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(Object, "getOwnPropertyDescriptor").mockImplementation(
+      (target, prop) => {
+        if (target === window && prop === "TZ") {
+          return {
+            configurable: false,
+            enumerable: true,
+            writable: false,
+            value: class TZMock {},
+          };
+        }
+
+        return nativeGetOwnPropertyDescriptor(target, prop);
+      },
+    );
+
     const { interceptTZ } =
       await import("../../src/features/record/tz-interceptor");
-
-    nativeDefineProperty(window, "TZ", {
-      configurable: false,
-      writable: false,
-      value: class TZMock {},
-    });
 
     interceptTZ();
 
@@ -93,6 +105,74 @@ describe("tz interceptor", () => {
     expect(
       (document.getElementById("review") as HTMLElement | null)?.innerText,
     ).toBe("TZ 属性不可拦截，无法捕获牌局");
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it("patches an existing writable TZ when the property is not configurable", async () => {
+    resetReviewDom();
+    class TZMock {}
+    window.TZ = TZMock as typeof window.TZ;
+
+    vi.spyOn(Object, "getOwnPropertyDescriptor").mockImplementation(
+      (target, prop) => {
+        if (target === window && prop === "TZ") {
+          return {
+            configurable: false,
+            enumerable: true,
+            writable: true,
+            value: window.TZ,
+          };
+        }
+
+        return nativeGetOwnPropertyDescriptor(target, prop);
+      },
+    );
+
+    const { interceptTZ } =
+      await import("../../src/features/record/tz-interceptor");
+    const { getTZInstance } =
+      await import("../../src/features/record/reviewer/state");
+
+    interceptTZ();
+
+    const instance = new window.TZ!();
+
+    expect(instance).toBeInstanceOf(TZMock);
+    expect(getTZInstance()).toBe(instance);
+    expect(window.__review_error).toBe("");
+  });
+
+  it("reports a timeout error when fallback patching never finds TZ", async () => {
+    resetReviewDom();
+    vi.useFakeTimers();
+    window.TZ = undefined;
+
+    vi.spyOn(Object, "getOwnPropertyDescriptor").mockImplementation(
+      (target, prop) => {
+        if (target === window && prop === "TZ") {
+          return {
+            configurable: false,
+            enumerable: true,
+            writable: true,
+            value: undefined,
+          };
+        }
+
+        return nativeGetOwnPropertyDescriptor(target, prop);
+      },
+    );
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { interceptTZ } =
+      await import("../../src/features/record/tz-interceptor");
+
+    interceptTZ();
+    vi.advanceTimersByTime(201 * 50);
+
+    expect(window.__review_error).toBe("未捕获牌局核心对象，尝试补建实例");
+    expect(
+      (document.getElementById("review") as HTMLElement | null)?.innerText,
+    ).toBe("未捕获牌局核心对象，尝试补建实例");
     expect(warnSpy).toHaveBeenCalled();
   });
 });

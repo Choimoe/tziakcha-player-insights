@@ -211,4 +211,66 @@ describe("data metrics", () => {
       },
     ]);
   });
+
+  it("throws when the session is not finished", async () => {
+    const { prepareSessionData } =
+      await import("../../src/features/game/data-metrics");
+
+    fetchSessionData.mockResolvedValue({
+      players: [{ name: "A" }, { name: "B" }, { name: "C" }, { name: "D" }],
+      records: [{ id: "round-1" }],
+      isFinished: false,
+    });
+
+    await expect(prepareSessionData("session-1")).rejects.toThrow(
+      "SESSION_NOT_FINISHED",
+    );
+    expect(fetchStepData).not.toHaveBeenCalled();
+  });
+
+  it("maps winners and discarders with seat rotation across rounds", async () => {
+    const { computeRoundOutcomes } =
+      await import("../../src/features/game/data-metrics");
+
+    const rounds = computeRoundOutcomes(
+      ["A", "B", "C", "D"],
+      [
+        {
+          b: 0,
+        },
+        {
+          b: 0x21,
+          y: [
+            {
+              f: 3,
+              t: { "82": 1 },
+            },
+          ],
+        },
+      ],
+    );
+
+    expect(rounds).toEqual([
+      {
+        roundNo: 2,
+        winners: [
+          {
+            playerName: "B",
+            totalFan: 3,
+            fanItems: [
+              {
+                fanIndex: 82,
+                fanName: "自摸",
+                count: 1,
+                unitFan: 1,
+                totalFan: 1,
+              },
+            ],
+          },
+        ],
+        discarderNames: ["C"],
+        selfDraw: false,
+      },
+    ]);
+  });
 });
