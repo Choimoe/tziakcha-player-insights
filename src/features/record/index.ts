@@ -1,5 +1,6 @@
 import { infoLog } from "../../shared/logger";
 import { w } from "../../shared/env";
+import { mountRecordFavoriteEntry } from "../favorites/record-entry";
 import { installRecordJsonParseGuard } from "./guards";
 import { initReviewer } from "./reviewer/init";
 import { setReviewError } from "./reviewer/state";
@@ -22,6 +23,7 @@ export function initRecordFeature(href: string): boolean {
   }
 
   w.setTimeout(initReviewer, 500);
+  w.setTimeout(() => mountRecordFavoriteEntry(), 550);
 
   return true;
 }

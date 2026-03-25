@@ -1,5 +1,6 @@
 import { w } from "../../shared/env";
 import { infoLog, warnLog } from "../../shared/logger";
+import { mountGameFavoriteEntry } from "../favorites/game-entry";
 import {
   computeMetrics,
   computeRoundOutcomes,
@@ -31,6 +32,7 @@ export function initGameFeature(href: string): boolean {
     return false;
   }
   infoLog("Game feature init started", { sessionId });
+  mountGameFavoriteEntry();
   upsertLoadingRows("计算中...");
   const preparedPromise = prepareSessionData(sessionId);
 
