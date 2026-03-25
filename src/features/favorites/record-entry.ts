@@ -1,8 +1,7 @@
 import { w } from "../../shared/env";
 import { createFavoriteEditor } from "./entry-editor";
 import { createFavoritesRepository } from "./storage";
-
-type FavoriteEntryRepository = ReturnType<typeof createFavoritesRepository>;
+import { FavoriteEntryRepository } from "./types";
 
 const ROOT_ID = "reviewer-record-favorite";
 const RETRY_DELAY_MS = 100;

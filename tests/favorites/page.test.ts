@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { FavoritesDocument } from "../../src/features/favorites/types";
 
 function createRepository(available = true) {
-  let documentState = {
+  let documentState: FavoritesDocument = {
     version: 1 as const,
     updatedAt: "2026-03-25T00:00:00.000Z",
-    ui: { activeTab: "game" as const },
+    ui: { activeTab: "game" },
     games: [
       {
         id: "game-1",

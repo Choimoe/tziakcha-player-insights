@@ -4,9 +4,7 @@ import {
   listTagsForTab,
 } from "./filter";
 import { createFavoritesRepository } from "./storage";
-import { FavoriteItem } from "./types";
-
-type FavoritesRepository = ReturnType<typeof createFavoritesRepository>;
+import { FavoriteItem, FavoritesPageRepository } from "./types";
 
 const ROOT_ID = "reviewer-favorites-page";
 let mountedTarget: HTMLElement | null = null;
@@ -172,7 +170,7 @@ async function readFileText(file: File): Promise<string> {
 
 export function initFavoritesPageFeature(
   _href: string,
-  repository: FavoritesRepository = createFavoritesRepository(),
+  repository: FavoritesPageRepository = createFavoritesRepository(),
 ): boolean {
   const mountTarget = getMountTarget();
   snapshotTarget(mountTarget);
