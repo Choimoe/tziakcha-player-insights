@@ -147,6 +147,32 @@ ___CSS_LOADER_EXPORT___.push([module.id, `#reviewer-tech-analysis-panel {
 #reviewer-tech-analysis-panel .reviewer-style-subtabs {
   margin: 0.4em 0 0.5em;
 }
+#reviewer-tech-analysis-panel .reviewer-style-fan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45em;
+  margin: 0.2em 0 0.55em;
+}
+#reviewer-tech-analysis-panel .reviewer-style-toggle-btn {
+  border: 1px solid #adb5bd;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #495057;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  padding: 0.3em 0.8em;
+  transition: all 0.15s ease;
+}
+#reviewer-tech-analysis-panel .reviewer-style-toggle-btn:hover {
+  border-color: #198754;
+  color: #198754;
+}
+#reviewer-tech-analysis-panel .reviewer-style-toggle-btn.is-active {
+  border-color: #198754;
+  background: #198754;
+  color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(25, 135, 84, 0.12);
+}
 #reviewer-tech-analysis-panel .reviewer-style-subtabs .nav-link {
   padding: 0.2em 0.6em;
   font-size: 0.86rem;
@@ -4700,6 +4726,9 @@ var analysis_update = injectStylesIntoStyleTag_default()(analysis/* default */.A
 const ANALYSIS_PANEL_ID = "reviewer-tech-analysis-panel";
 const TAB_ANALYSIS_ID = "reviewer-tech-tab-analysis";
 const FAN_GROUP_TAB_ID = "reviewer-style-fan-group-tabs";
+const FAN_FILTER_RARE_BTN_ID = "reviewer-style-fan-filter-rare";
+const FAN_FILTER_LARGE_DIFF_BTN_ID = "reviewer-style-fan-filter-large-diff";
+const FAN_SORT_MODE_BTN_ID = "reviewer-style-fan-sort-mode";
 const SELF_PLAYER_SENTINEL = "__self__";
 let initialized = false;
 let playerAId = "";
@@ -4708,6 +4737,9 @@ let fanRowsAll = [];
 let currentFanGroup = "all";
 let playerAName = "";
 let playerBName = "";
+let hideRareFans = true;
+let onlyLargeDiffFans = false;
+let sortByAbsDiff = false;
 function analysis_toNumber(value) {
     const n = Number(value);
     return Number.isFinite(n) ? n : 0;
@@ -5121,6 +5153,11 @@ function ensureAnalysisPanel() {
       </table>
 
       <h5 class="reviewer-style-subtitle">番种比较</h5>
+      <div class="reviewer-style-fan-actions">
+        <button id="${FAN_FILTER_RARE_BTN_ID}" type="button" class="reviewer-style-toggle-btn is-active">不显示稀有番种</button>
+        <button id="${FAN_FILTER_LARGE_DIFF_BTN_ID}" type="button" class="reviewer-style-toggle-btn">仅显示大差异番种</button>
+        <button id="${FAN_SORT_MODE_BTN_ID}" type="button" class="reviewer-style-toggle-btn">排序：差值</button>
+      </div>
       <ul class="nav nav-tabs reviewer-style-subtabs" id="${FAN_GROUP_TAB_ID}">
         <li class="nav-item"><a class="nav-link active" href="javascript:void(0)" data-fan-group="all">全部番种</a></li>
         <li class="nav-item"><a class="nav-link" href="javascript:void(0)" data-fan-group="small">小番(<=2)</a></li>
@@ -5299,7 +5336,67 @@ function renderTopDiffRows(rows) {
 }
 function renderCurrentTopDiff() {
     const grouped = filterFanDiffRowsByGroup(fanRowsAll, currentFanGroup);
-    renderTopDiffRows([...grouped].sort((left, right) => Math.abs(right.diffPct) - Math.abs(left.diffPct)));
+    const filtered = grouped.filter((row) => {
+        if (hideRareFans && row.rateA < 0.5 && row.rateB < 0.5) {
+            return false;
+        }
+        if (onlyLargeDiffFans && Math.abs(row.diffPct) <= 1) {
+            return false;
+        }
+        return true;
+    });
+    const sorted = [...filtered].sort((left, right) => {
+        if (sortByAbsDiff) {
+            return Math.abs(right.diffPct) - Math.abs(left.diffPct);
+        }
+        return right.diffPct - left.diffPct;
+    });
+    renderTopDiffRows(sorted);
+}
+function updateFanActionButtonsState() {
+    const rareBtn = document.getElementById(FAN_FILTER_RARE_BTN_ID);
+    const largeDiffBtn = document.getElementById(FAN_FILTER_LARGE_DIFF_BTN_ID);
+    const sortBtn = document.getElementById(FAN_SORT_MODE_BTN_ID);
+    if (rareBtn) {
+        rareBtn.classList.toggle("is-active", hideRareFans);
+    }
+    if (largeDiffBtn) {
+        largeDiffBtn.classList.toggle("is-active", onlyLargeDiffFans);
+    }
+    if (sortBtn) {
+        sortBtn.classList.toggle("is-active", sortByAbsDiff);
+        sortBtn.textContent = sortByAbsDiff ? "排序：绝对值" : "排序：差值";
+    }
+}
+function bindFanActionButtons() {
+    const rareBtn = document.getElementById(FAN_FILTER_RARE_BTN_ID);
+    const largeDiffBtn = document.getElementById(FAN_FILTER_LARGE_DIFF_BTN_ID);
+    const sortBtn = document.getElementById(FAN_SORT_MODE_BTN_ID);
+    if (rareBtn && !rareBtn.dataset.bound) {
+        rareBtn.dataset.bound = "1";
+        rareBtn.addEventListener("click", () => {
+            hideRareFans = !hideRareFans;
+            updateFanActionButtonsState();
+            renderCurrentTopDiff();
+        });
+    }
+    if (largeDiffBtn && !largeDiffBtn.dataset.bound) {
+        largeDiffBtn.dataset.bound = "1";
+        largeDiffBtn.addEventListener("click", () => {
+            onlyLargeDiffFans = !onlyLargeDiffFans;
+            updateFanActionButtonsState();
+            renderCurrentTopDiff();
+        });
+    }
+    if (sortBtn && !sortBtn.dataset.bound) {
+        sortBtn.dataset.bound = "1";
+        sortBtn.addEventListener("click", () => {
+            sortByAbsDiff = !sortByAbsDiff;
+            updateFanActionButtonsState();
+            renderCurrentTopDiff();
+        });
+    }
+    updateFanActionButtonsState();
 }
 function setSelectOptions(selectEl, candidates) {
     const options = ['<option value="">--请选择--</option>'];
@@ -5486,6 +5583,7 @@ function initTechAnalysis() {
     bindTabToggle();
     initPlayerInputs();
     bindFanSubTabs();
+    bindFanActionButtons();
     bindCompareActions();
     initialized = true;
 }
