@@ -16,9 +16,9 @@ fi
 cd "$REPO_DIR"
 rm -f mkdocs.web.yml
 git remote set-url origin "$REPO_URL"
-git fetch origin "$DOCS_BRANCH" "$ASSET_BRANCH"
-git checkout -B "$DOCS_BRANCH" "origin/$DOCS_BRANCH"
-git reset --hard "origin/$DOCS_BRANCH"
+git fetch origin "refs/heads/$DOCS_BRANCH:refs/remotes/origin/$DOCS_BRANCH" "refs/heads/$ASSET_BRANCH:refs/remotes/origin/$ASSET_BRANCH"
+git checkout -B "$DOCS_BRANCH" "refs/remotes/origin/$DOCS_BRANCH"
+git reset --hard "refs/remotes/origin/$DOCS_BRANCH"
 git clean -fdx -e .venv/
 
 if [ ! -x .venv/bin/python ] || [ ! -x .venv/bin/pip ]; then
