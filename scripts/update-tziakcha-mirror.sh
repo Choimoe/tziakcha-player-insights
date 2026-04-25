@@ -14,6 +14,7 @@ if [ ! -d "$REPO_DIR/.git" ]; then
 fi
 
 cd "$REPO_DIR"
+rm -f mkdocs.web.yml
 git remote set-url origin "$REPO_URL"
 git fetch origin "$DOCS_BRANCH" "$ASSET_BRANCH"
 git checkout -B "$DOCS_BRANCH" "origin/$DOCS_BRANCH"
