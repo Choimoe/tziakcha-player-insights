@@ -3984,9 +3984,6 @@ function clearInsertedRows() {
     document.getElementById("reviewer-game-ratio-row")?.remove();
     document.getElementById("reviewer-game-chaga-row")?.remove();
     document.getElementById("reviewer-game-pending-row")?.remove();
-    document
-        .querySelectorAll(".reviewer-game-round-toggle, .reviewer-game-round-separator, .reviewer-game-detail-row")
-        .forEach((element) => element.remove());
 }
 function withAnchorRow(callback, retryInterval = UI_RETRY_INTERVAL_MS) {
     const anchor = findStandardScoreRow();
@@ -4234,10 +4231,13 @@ function initGameFeature(href) {
     void preparedPromise
         .then((prepared) => {
         const rounds = computeRoundOutcomes(prepared.sessionPlayerNames, prepared.steps);
+        infoLog("Game session prepared", {
+            sessionId,
+            isFinished: prepared.isFinished,
+            recordCount: prepared.steps.length,
+            roundsWithOutcomeCount: rounds.length,
+        });
         installRoundToggleButtons(rounds);
-        if (!prepared.isFinished) {
-            upsertMetricsMessageRows("请等待牌局完成");
-        }
     })
         .catch((error) => {
         warnLog("Game rounds preview failed", error);
