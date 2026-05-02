@@ -4,7 +4,7 @@
 // @name:en          Tziakcha Player Insights
 // @icon             https://cdn.jsdelivr.net/gh/Choimoe/chaga-reviewer-script/doc/img/icon.png
 // @namespace        https://greasyfork.org/users/1543716
-// @version          2.2.2
+// @version          2.2.1
 // @author           Choimoe <qwqshq@gmail.com>
 // @source           https://github.com/tziakcha-stats/tziakcha-player-insights
 // @license          MIT
@@ -6145,8 +6145,12 @@ function renderZumgze(fan = {}) {
     }
 }
 function initTechZumgze() {
-    const basicTable = document.getElementById("basic");
-    const eloTable = document.getElementById("elo");
+    const doc = w.document;
+    if (!doc) {
+        return;
+    }
+    const basicTable = doc.getElementById("basic");
+    const eloTable = doc.getElementById("elo");
     if (!basicTable || !eloTable) {
         w.setTimeout(initTechZumgze, 100);
         return;
