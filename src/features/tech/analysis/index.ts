@@ -1036,11 +1036,6 @@ function initPlayerInputs(): void {
 }
 
 export function initTechAnalysis(): void {
-  if (initialized) {
-    bindTabToggle();
-    return;
-  }
-
   const basicTable = document.getElementById("basic");
   const eloTable = document.getElementById("elo");
   if (!basicTable || !eloTable) {
@@ -1057,6 +1052,11 @@ export function initTechAnalysis(): void {
     return;
   }
   if (!ensureAnalysisTab()) {
+    return;
+  }
+
+  if (initialized) {
+    bindTabToggle();
     return;
   }
 
