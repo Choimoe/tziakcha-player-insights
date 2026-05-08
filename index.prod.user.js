@@ -4,7 +4,7 @@
 // @name:en          Tziakcha Player Insights
 // @icon             https://cdn.jsdelivr.net/gh/Choimoe/chaga-reviewer-script/doc/img/icon.png
 // @namespace        https://greasyfork.org/users/1543716
-// @version          2.2.3
+// @version          2.2.6
 // @author           Choimoe <qwqshq@gmail.com>
 // @source           https://github.com/tziakcha-stats/tziakcha-player-insights
 // @license          MIT
@@ -4172,6 +4172,40 @@ function parseDisplayedScores(row) {
     }
     return scores;
 }
+function parseDisplayedTotals(row) {
+    const cells = Array.from(row.children);
+    const totals = [];
+    for (let idx = 2; idx < cells.length; idx += 2) {
+        const value = Number((cells[idx]?.textContent || "").trim());
+        totals.push(Number.isFinite(value) ? value : 0);
+    }
+    return totals;
+}
+function parseOriginalScoreRoleClasses(row) {
+    const cells = Array.from(row.children);
+    const roles = [];
+    for (let idx = 1; idx < cells.length; idx += 2) {
+        const sourceClass = cells[idx]?.dataset.reviewerOriginalScoreClass ??
+            cells[idx]?.className ??
+            "";
+        if (sourceClass.includes("f")) {
+            roles.push("f");
+        }
+        else if (sourceClass.includes("w")) {
+            roles.push("w");
+        }
+        else if (sourceClass.includes("c")) {
+            roles.push("c");
+        }
+        else if (sourceClass.includes("n")) {
+            roles.push("n");
+        }
+        else {
+            roles.push("");
+        }
+    }
+    return roles;
+}
 function getPlayerColumnIndexMap(table) {
     const map = new Map();
     const nameCells = Array.from(table.querySelectorAll('td[name="nm"]'));
@@ -4186,18 +4220,13 @@ function getPlayerColumnIndexMap(table) {
 function getSeatIndexByName(name, playerColumnIndexMap) {
     return playerColumnIndexMap.get(name.trim()) ?? -1;
 }
-function detectFoulSeat(scores, plusTenRule) {
-    let foundSeat = null;
-    scores.forEach((score, seat) => {
-        if (plusTenRule ? score <= -30 : score <= -40) {
-            foundSeat = seat;
-        }
-    });
-    return foundSeat;
+function detectFoulSeat(scoreRoles) {
+    const foundSeat = scoreRoles.findIndex((role) => role === "f");
+    return foundSeat >= 0 ? foundSeat : null;
 }
-function buildCompactScoreTexts(round, scores, plusTenRule, playerColumnIndexMap) {
+function buildCompactScoreTexts(round, scores, plusTenRule, playerColumnIndexMap, scoreRoles) {
     const result = [0, 1, 2, 3].map(() => ({ text: "", foul: false }));
-    const foulSeat = detectFoulSeat(scores, plusTenRule);
+    const foulSeat = detectFoulSeat(scoreRoles);
     if (foulSeat !== null) {
         result[foulSeat] = {
             text: plusTenRule ? "-10×3" : "-40",
@@ -4239,7 +4268,70 @@ function buildCompactScoreTexts(round, scores, plusTenRule, playerColumnIndexMap
     }
     return result;
 }
+function expandCompactScoresToActualScores(compactScores, baseScore, plusTenRule) {
+    return compactScores.map((item) => {
+        const text = item.text.trim();
+        if (!text) {
+            return 0;
+        }
+        if (text.includes("×3")) {
+            if (text === "-10×3") {
+                return plusTenRule ? -30 : -40;
+            }
+            const value = Number(text.replace("×3", ""));
+            if (Number.isFinite(value)) {
+                return value * 3 + baseScore * 3;
+            }
+        }
+        if (text.startsWith("-10×3-")) {
+            const value = Number(text.replace("-10×3-", ""));
+            if (Number.isFinite(value)) {
+                return -30 - value;
+            }
+        }
+        if (text.startsWith("-40-")) {
+            const value = Number(text.replace("-40-", ""));
+            if (Number.isFinite(value)) {
+                return -40 - value;
+            }
+        }
+        const value = Number(text);
+        if (!Number.isFinite(value)) {
+            return 0;
+        }
+        if (value > 0) {
+            return value + baseScore * 3;
+        }
+        if (value < 0) {
+            return value - baseScore;
+        }
+        return 0;
+    });
+}
+function validateCompactScoreRound(roundNo, row, compactScores, baseScore, plusTenRule) {
+    const actualScores = parseDisplayedScores(row);
+    const displayedTotals = parseDisplayedTotals(row);
+    const expectedScores = expandCompactScoresToActualScores(compactScores, baseScore, plusTenRule);
+    const previousRow = row.previousElementSibling;
+    const previousTotals = previousRow?.getAttribute("name") === "rdtr"
+        ? parseDisplayedTotals(previousRow)
+        : [0, 0, 0, 0];
+    const scoreMismatch = expectedScores.some((value, index) => value !== actualScores[index]);
+    const totalMismatch = expectedScores.some((value, index) => previousTotals[index] + value !== displayedTotals[index]);
+    if (scoreMismatch || totalMismatch) {
+        warnLog("简洁得分校验失败", {
+            roundNo,
+            expectedScores,
+            actualScores,
+            previousTotals,
+            displayedTotals,
+            compactScores: compactScores.map((item) => item.text),
+            mismatch: scoreMismatch ? "得分/累计" : "累计",
+        });
+    }
+}
 function applyScoreCompactMode(table, rounds, mode) {
+    const baseScore = parseBaseScore();
     const plusTenRule = isPlusTenFoulRule();
     const roundMap = new Map();
     const playerColumnIndexMap = getPlayerColumnIndexMap(table);
@@ -4254,6 +4346,7 @@ function applyScoreCompactMode(table, rounds, mode) {
             return;
         }
         const scores = parseDisplayedScores(row);
+        const scoreRoles = parseOriginalScoreRoleClasses(row);
         if (scores.length !== 4) {
             return;
         }
@@ -4263,8 +4356,11 @@ function applyScoreCompactMode(table, rounds, mode) {
                 winners: [],
                 discarderNames: [],
                 selfDraw: false,
-            }, scores, plusTenRule, playerColumnIndexMap)
+            }, scores, plusTenRule, playerColumnIndexMap, scoreRoles)
             : scores.map((score) => ({ text: String(score), foul: false }));
+        if (mode === "compact") {
+            validateCompactScoreRound(roundNo, row, displayed, baseScore, plusTenRule);
+        }
         displayed.forEach((item, seat) => {
             const cell = row.children[seat * 2 + 1];
             if (!cell) {
@@ -7515,10 +7611,6 @@ function initPlayerInputs() {
     updateTablePlayerHeaders(playerAName || "玩家A", playerBName || "玩家B");
 }
 function initTechAnalysis() {
-    if (initialized) {
-        bindTabToggle();
-        return;
-    }
     const basicTable = document.getElementById("basic");
     const eloTable = document.getElementById("elo");
     if (!basicTable || !eloTable) {
@@ -7533,6 +7625,10 @@ function initTechAnalysis() {
         return;
     }
     if (!ensureAnalysisTab()) {
+        return;
+    }
+    if (initialized) {
+        bindTabToggle();
         return;
     }
     hideLegacyTools(container);
