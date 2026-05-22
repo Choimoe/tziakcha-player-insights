@@ -7674,6 +7674,8 @@ const routeState = {
 };
 function runOnRoute() {
     const href = w.location.href;
+    const wasFavoritesPage = routeState.lastHref.includes("#reviewer-favorites");
+    const isNowFavoritesPage = href.includes("#reviewer-favorites");
     if (routeState.lastHref === href) {
         return;
     }
@@ -7697,6 +7699,12 @@ function runOnRoute() {
         if (initFavoritesPageFeature(href)) {
             debugLog("Favorites route init dispatched");
         }
+        return;
+    }
+    // 如果从收藏页面返回，强制清理收藏页面
+    if (wasFavoritesPage && !isNowFavoritesPage) {
+        debugLog("Returning from favorites page, forcing cleanup");
+        cleanupFavoritesPage();
         return;
     }
     cleanupFavoritesPage();
