@@ -309,4 +309,88 @@ describe("favorites page", () => {
     expect(document.querySelector("#reviewer-favorites-page")).toBeNull();
     expect(document.body.textContent).toContain("home content");
   });
+
+  it("restores homepage content after browser back button", async () => {
+    const { cleanupFavoritesPage, initFavoritesPageFeature } =
+      await import("../../src/features/favorites/page");
+
+    // 模拟进入收藏页面
+    initFavoritesPageFeature(window.location.href, createRepository());
+    expect(document.body.textContent).not.toContain("home content");
+
+    // 模拟浏览器返回按钮（调用 cleanupFavoritesPage）
+    cleanupFavoritesPage();
+
+    // 验证首页内容被恢复
+    expect(document.querySelector("#reviewer-favorites-page")).toBeNull();
+    expect(document.body.textContent).toContain("home content");
+
+    // 再次进入收藏页面
+    initFavoritesPageFeature(window.location.href, createRepository());
+    expect(document.body.textContent).not.toContain("home content");
+
+    // 再次返回
+    cleanupFavoritesPage();
+
+    // 验证首页内容仍然被恢复
+    expect(document.body.textContent).toContain("home content");
+  });
+
+  it("simulates browser back button via route change", async () => {
+    const { initFavoritesPageFeature } =
+      await import("../../src/features/favorites/page");
+    const { runOnRoute } = await import("../../src/app/route-runner");
+
+    // 初始状态：首页
+    window.history.replaceState({}, "", "/");
+    runOnRoute();
+    expect(document.body.textContent).toContain("home content");
+
+    // 进入收藏页面
+    window.history.pushState({}, "", "/#reviewer-favorites");
+    runOnRoute();
+    expect(document.body.textContent).not.toContain("home content");
+    expect(document.querySelector("#reviewer-favorites-page")).not.toBeNull();
+
+    // 模拟浏览器返回按钮 - 直接修改 URL 并调用 runOnRoute
+    window.history.replaceState({}, "", "/");
+    runOnRoute();
+
+    // 验证首页内容被恢复
+    expect(document.querySelector("#reviewer-favorites-page")).toBeNull();
+    expect(document.body.textContent).toContain("home content");
+  });
+
+  it("handles popstate event with hash change", async () => {
+    const { initFavoritesPageFeature } =
+      await import("../../src/features/favorites/page");
+    const { runOnRoute } = await import("../../src/app/route-runner");
+    const { installRouteWatcher } = await import("../../src/app/route-watcher");
+
+    // 安装路由监听器
+    installRouteWatcher(runOnRoute);
+
+    // 初始状态：首页
+    window.history.replaceState({}, "", "/");
+    runOnRoute();
+    expect(document.body.textContent).toContain("home content");
+
+    // 进入收藏页面
+    window.history.pushState({}, "", "/#reviewer-favorites");
+    runOnRoute();
+    expect(document.body.textContent).not.toContain("home content");
+
+    // 模拟浏览器返回按钮 - 使用 popstate 事件
+    // 注意：在实际浏览器中，popstate 事件触发时 location.href 已经更新
+    // 但在 jsdom 中，我们需要手动触发事件
+    window.history.replaceState({}, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    // 等待异步操作
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // 验证首页内容被恢复
+    expect(document.querySelector("#reviewer-favorites-page")).toBeNull();
+    expect(document.body.textContent).toContain("home content");
+  });
 });
